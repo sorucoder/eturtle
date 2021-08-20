@@ -1,7 +1,7 @@
 local expect = require("cc.expect")
 
 local eturtle = {} do
-    local position, bearing, equipment
+    local position, bearing, equipment, options
 
     -- Constants
     eturtle.SOUTH   = 0.0
@@ -12,7 +12,7 @@ local eturtle = {} do
     -- Settings
     settings.define("eturtle.statefile", {description = "The path in which to store the turtle's state.", default = ".turtle", type = "string"})
 
-    -- Calibration Methods
+    -- Calibration and Configuration Methods
     function eturtle.calibrateEquipment(automatically, defaultLeft, defaultRight)
         expect(1, automatically, "nil", "boolean")
         if type(automatically) == "boolean" then
@@ -379,5 +379,27 @@ local eturtle = {} do
                 bearing = {success = calibrateBearingSuccess, message = calibrateBearingMessage},
                 equipment = {success = calibrateEquipmentSuccess, message = calibrateEquipmentMessage}
             }
+    end
+
+    -- Introspection Methods
+    function eturtle.getPosition()
+        return vector.new(position.x, position.y, position.z)
+    end
+
+    function eturtle.getBearing()
+        return bearing * math.pi
+    end
+
+    function eturtle.getEquipment()
+        return {left = equipment.left, right = equipment.right}
+    end
+
+    function eturtle.getSelectedSlot()
+        return turtle.getSelectedSlot()
+    end
+
+    function eturtle.getFuelLevel()
+        local fuelLevel = turtle.getFuelLevel()
+        return fuelLevel == "unlimited" and math.huge or fuelLevel
     end
 end return eturtle

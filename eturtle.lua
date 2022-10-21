@@ -1,387 +1,305 @@
 local expect = require("cc.expect")
 
-local eturtle = {} do
-    local position, bearing, equipment, options
+local function roundToNearestInterval(value, interval)
+	local valueDown, valueUp = math.floor(value / interval) * interval, math.ceil(value / interval) * interval
+	local differenceDown, differenceUp = value - valueDown, valueUp - value
+	if differenceDown < differenceUp then
+		return valueDown
+	else
+		return valueUp
+	end
+end
 
-    -- Constants
+local eturtle = {} do
+    local position, bearing, equipment
+	
+    --[[ Constants ]]--
     eturtle.SOUTH   = 0.0
     eturtle.WEST    = 0.5
     eturtle.NORTH   = 1.0
     eturtle.EAST    = 1.5
 
-    -- Settings
+    --[[ Settings ]]--
     settings.define("eturtle.statefile", {description = "The path in which to store the turtle's state.", default = ".turtle", type = "string"})
 
-    -- Calibration and Configuration Methods
-    function eturtle.calibrateEquipment(automatically, defaultLeft, defaultRight)
-        expect(1, automatically, "nil", "boolean")
-        if type(automatically) == "boolean" then
-            if automatically then
-                expect(2, defaultLeft, "nil", "boolean", "string")
-                if type(defaultLeft) == "boolean" or type(defaultLeft) == "string" then
-                    expect(3, defaultRight, "boolean", "string")
-                else
-                    expect(3, defaultRight, "nil")
-                end
-            else
-                expect(2, defaultLeft, "boolean", "string")
-                expect(3, defaultRight, "boolean", "string")
-            end
-        else
-            automatically = true
-            defaultLeft = nil
-            defaultRight = nil
-        end
+    --[[ Calibration and Configuration Methods ]]--
+    function eturtle.calibrateEquipment(manualLeft, manualRight)
+		-- Check argument types.
+		expect(1, manualLeft, "nil", "string")
+		expect(2, manualRight, "nil", "string")
+		
+		-- Check for empty slot.
+		-- Unequip, analyze, then equip each side.
+		local currentSlot = turtle.getSelectedSlot()
+		for slot = 1, 16 do
+			if turtle.getItemCount(slot) == 0 then
+				equipment = {}
+				turtle.select(slot)
+				if turtle.equipLeft() then
+					local item = turtle.getItemDetail()
+					if item then equipment.left = item.name end
+					turtle.equipLeft()
+				end
+				if turtle.equipRight() then
+					local item = turtle.getItemDetail()
+					if item then equipment.right = item.name end
+					turtle.equipRight()
+				end
+				turtle.select(currentSlot)
+				return true
+			end
+		end
 
-        if automatically then
-            local oldSlot = turtle.getSelectedSlot()
-            for slot = 1, 16 do
-                if not turtle.getItemDetail(slot) then
-                    turtle.select(slot)
-
-                    equipment = {left = false, right = false}
-
-                    if turtle.equipLeft() then
-                        local item = turtle.getItemDetail()
-                        equipment.left = item.name
-                        turtle.equipLeft()
-                    end
-
-                    if turtle.equipRight() then
-                        local item = turtle.getItemDetail()
-                        equipment.right = item.name
-                        turtle.equipRight()
-                    end
-
-                    turtle.select(oldSlot)
-                    return true, "automatic calibration succeeded"
-                end
-            end
-
-            if defaultLeft ~= nil then
-                equipment = {left = defaultLeft, right = defaultRight}
-                return true, "automatic calibration failed: could not find an empty slot; manual calibration used"
-            else
-                return false, "automatic calibration failed: could not find an empty slot"
-            end
-        else
-            equipment = {left = defaultLeft, right = defaultRight}
-            return true, "manual calibration used"
-        end
+		equipment = {left = manualLeft, right = manualRight}
+		return false
     end
 
-    function eturtle.calibratePosition(automatically, defaultX, defaultY, defaultZ)
-        expect(1, automatically, "nil", "boolean")
-        if type(automatically) == "boolean" then
-            if automatically then
-                expect(2, defaultX, "nil", "number")
-                if type(defaultX) == "number" then
-                    expect(3, defaultY, "number")
-                    expect(4, defaultZ, "number")
-                else
-                    expect(3, defaultY, "nil")
-                    expect(4, defaultZ, "nil")
-                end
-            else
-                expect(2, defaultX, "number")
-                expect(3, defaultY, "number")
-                expect(4, defaultZ, "number")
-            end
-        else
-            automatically = true
-            defaultX = nil
-            defaultY = nil
-            defaultZ = nil
-        end
+    function eturtle.calibratePosition(manualX, manualY, manualZ)
+        -- Coalesce default argument values.
+		if manualX == nil then manualX = 0 end
+		if manualY == nil then manualY = 0 end
+		if manualZ == nil then manualZ = 0 end
 
-        if automatically then
-            if equipment then
-                if
-                    equipment.left == "computercraft:wireless_modem" or equipment.left == "computercraft:advanced_wireless_modem" or
-                    equipment.right == "computercraft:wireless_modem" or equipment.right == "computercraft:advanced_wireless_modem"
-                then
-                    local x, y, z = gps.locate()
-                    if x then
-                        position = vector.new(x, y, z)
-                        return true, "automatic calibration succeeded"
-                    elseif defaultX then
-                        position = vector.new(defaultX, defaultY, defaultZ)
-                        return true, "automatic calibration failed: gps unavailable; manual calibration used"
-                    else
-                        return false, "automatic calibration failed: gps unavailable"
-                    end
-                end
-            end
+		-- Check argument types.
+		expect(1, manualX, "number")
+		expect(2, manualY, "number")
+		expect(3, manualZ, "number")
 
-            local oldSlot = turtle.getSelectedSlot()
-            for slot = 1, 16 do
-                local item = turtle.getItemDetail(slot)
-                if item.name == "computercraft:wireless_modem" or item.name == "computercraft:advanced_wireless_modem" then
-                    turtle.select(slot)
-                    turtle.equipRight()
-                    local x, y, z = gps.locate()
-                    turtle.equipRight()
-                    turtle.select(oldSlot)
+		-- Check argument values.
+		expect.range(manualX, -3e7, 3e7)
+		expect.range(manualY, -3e7, 3e7)
+		expect.range(manualZ, -3e7, 3e7)
+		
+		-- Attempt to determine if a modem is available in equipment or inventory,
+		-- and equip one if one is not already equipped.
+		local currentSlot, modemInEquipment, modemInInventory = turtle.getSelectedSlot(), nil, false
+		do
+			for slot = 1, 16 do
+				if modemInEquipment == nil and turtle.getItemCount(slot) == 0 then
+					turtle.select(slot)
+					if turtle.equipLeft() then
+						local item = turtle.getItemDetail()
+						if item and item.name:match("^computercraft:[%a_]*wireless_modem$") then
+							modemInEquipment = true
+							turtle.equipLeft()
+							break
+						end
+						turtle.equipLeft()
+					end
+					if turtle.equipRight() then
+						local item = turtle.getItemDetail()
+						if item and item.name:match("^computercraft:[%a_]*wireless_modem$") then
+							modemInEquipment = true
+							turtle.equipRight()
+							break
+						end
+						turtle.equipRight()
+					end
+					turtle.select(currentSlot)
+					modemInEquipment = false
+				elseif turtle.getItemCount(slot) ~= 0 then
+					local item = turtle.getItemDetail()
+					if item and item.name:match("^computercraft:[%a_]*wireless_modem$") then
+						modemInInventory = true
+						turtle.select(slot)
+						turtle.equipLeft()
+						break
+					end
+				end
+			end
+		end
 
-                    if x then
-                        position = vector.new(x, y, z)
-                        return true, "automatic calibration succeeded"
-                    elseif defaultX then
-                        position = vector.new(defaultX, defaultY, defaultZ)
-                        return true, "automatic calibration failed: gps unavailable; manual calibration used"
-                    else
-                        return false, "automatic calibration failed: gps unavailable"
-                    end
-                end
-            end
+		-- Get the position using GPS if available.
+		if modemInEquipment or modemInInventory then
+			local x, y, z = gps.locate()
+			if x then
+				position = vector.new(x, y, z)
+				if modemInInventory then
+					turtle.equipLeft()
+					turtle.select(currentSlot)
+				end
+				return true
+			end
+		end
 
-            if defaultX then
-                position = vector.new(defaultX, defaultY, defaultZ)
-                return true, "automatic calibration failed: no wireless modem found; manual calibration used"
-            else
-                return false, "automatic calibration failed: no wireless modem found"
-            end
-        else
-            position = vector.new(defaultX, defaultY, defaultZ)
-            return true, "manual calibration used"
-        end
+		position = vector.new(manualX, manualY, manualZ)
+		return false
     end
 
-    function eturtle.calibrateBearing(automatically, defaultBearing)
-        expect(1, automatically, "nil", "boolean")
-        if type(automatically) == "boolean" then
-            if automatically then
-                expect(2, defaultBearing, "nil", "number")
-            else
-                expect(2, defaultBearing, "number")
-            end
-        else
-            automatically = true
-        end
+    function eturtle.calibrateBearing(manualBearing)
+        -- Coalesce default argument value.
+		if manualBearing == nil then manualBearing = eturtle.SOUTH end
+		
+		-- Check argument type.
+		expect(1, manualBearing, "number")
 
-        if automatically then
-            local fuelLevel = turtle.getFuelLevel()
-            if fuelLevel == "unlimited" or fuelLevel >= 3 then
-                if equipment then
-                    if
-                        equipment.left == "computercraft:wireless_modem" or equipment.left == "computercraft:advanced_wireless_modem" or
-                        equipment.right == "computercraft:wireless_modem" or equipment.right == "computercraft:advanced_wireless_modem"
-                    then
-                        local x0, y0, z0 = gps.locate()
-                        if x0 then
-                            if turtle.forward() then
-                                local x1, y1, z1 = gps.locate()
-                                if not turtle.back() then error("obstruction during bearing calibration") end
+		-- Check argument value.
+		expect.range(manualBearing, 0.0, 2.0)
+		manualBearing = roundToNearestInterval(manualBearing, 0.5)
 
-                                if x1 then
-                                    local displacement = vector.new(x1, y1, z1) - vector.new(x0, y0, z0)
-                                    if displacement.z == 1 then
-                                        bearing = eturtle.SOUTH
-                                    elseif displacement.x == -1 then
-                                        bearing = eturtle.WEST
-                                    elseif displacement.z == -1 then
-                                        bearing = eturtle.NORTH
-                                    elseif displacement.x == 1 then
-                                        bearing = eturtle.EAST
-                                    else
-                                        error("no horizontal displacement when moving")
-                                    end
-                                    return true, "automatic calibration succeeded"
-                                elseif defaultBearing then
-                                    bearing = defaultBearing
-                                    return true, "automatic calibration failed: gps unavailable; manual calibration used"
-                                else
-                                    return false, "automatic calibration failed: gps unavailable"
-                                end
-                            end
+		-- Check the current fuel level to verify if the calibration is possible.
+		if turtle.getFuelLimit() == "unlimited" or turtle.getFuelLevel() >= 2 then
+			-- Attempt to determine if a modem is available in equipment or inventory,
+			-- and equip one if one is not already equipped.
+			local currentSlot, modemInEquipment, modemInInventory = turtle.getSelectedSlot(), nil, false
+			do
+				for slot = 1, 16 do
+					if modemInEquipment == nil and turtle.getItemCount(slot) == 0 then
+						turtle.select(slot)
+						if turtle.equipLeft() then
+							local item = turtle.getItemDetail()
+							if item and item.name:match("^computercraft:[%a_]*wireless_modem$") then
+								modemInEquipment = true
+								turtle.equipLeft()
+								break
+							end
+							turtle.equipLeft()
+						end
+						if turtle.equipRight() then
+							local item = turtle.getItemDetail()
+							if item and item.name:match("^computercraft:[%a_]*wireless_modem$") then
+								modemInEquipment = true
+								turtle.equipRight()
+								break
+							end
+							turtle.equipRight()
+						end
+						turtle.select(currentSlot)
+						modemInEquipment = false
+					elseif turtle.getItemCount(slot) ~= 0 then
+						local item = turtle.getItemDetail()
+						if item and item.name:match("^computercraft:[%a_]*wireless_modem$") then
+							modemInInventory = true
+							turtle.select(slot)
+							turtle.equipLeft()
+							break
+						end
+					end
+				end
+			end
 
-                            if turtle.back() then
-                                local x1, y1, z1 = gps.locate()
-                                if not turtle.forward() then error("obstruction during bearing calibration") end
+			-- Calculate bearing by calculating a displacement moving forward.
+			if modemInEquipment or modemInInventory then
+				local deltaX, deltaZ = nil, nil
+				do
+					local x0, _, z0 = gps.locate()
+					if x0 then
+						if turtle.forward() then
+							local x1, _, z1 = gps.locate()
+							if x1 then
+								deltaX, deltaZ = x1 - x0, z1 - z0
+							end
 
-                                if x1 then
-                                    local displacement = vector.new(x1, y1, z1) - vector.new(x0, y0, z0)
-                                    if displacement.z == -1 then
-                                        bearing = eturtle.SOUTH
-                                    elseif displacement.x == 1 then
-                                        bearing = eturtle.WEST
-                                    elseif displacement.z == 1 then
-                                        bearing = eturtle.NORTH
-                                    elseif displacement.x == -1 then
-                                        bearing = eturtle.EAST
-                                    else
-                                        error("no horizontal displacement when moving")
-                                    end
-                                    return true, "automatic calibration succeeded"
-                                elseif defaultBearing then
-                                    bearing = defaultBearing
-                                    return true, "automatic calibration failed: gps unavailable; manual calibration used"
-                                else
-                                    return false, "automatic calibration failed: gps unavailable"
-                                end
-                            end
+							if not turtle.back() then
+								if modemInInventory then
+									turtle.equipLeft()
+									turtle.select(currentSlot)
+								end
+								error("obstruction during bearing calibration")
+							end
+						elseif turtle.back() then
+							local x1, _, z1 = gps.locate()
+							if x1 then
+								deltaX, deltaZ = x0 - x1, z0 - z1
+							end
 
-                            if defaultBearing then
-                                bearing = defaultBearing
-                                return true, "automatic calibration failed: obstructed in both directions; manual calibration used"
-                            else
-                                return false, "automatic calibration failed: obstructed in both directions"
-                            end
-                        elseif defaultBearing then
-                            bearing = defaultBearing
-                            return true, "automatic calibration failed: gps unavailable; manual calibration used"
-                        else
-                            return false, "automatic calibration failed: gps unavailable"
-                        end
-                    end
-                end
+							if not turtle.forward() then
+								if modemInInventory then
+									turtle.equipLeft()
+									turtle.select(currentSlot)
+								end
+								error("obstruction during bearing calibration")
+							end
+						else
+							turtle.turnRight()
+							if turtle.forward() then
+								local x1, _, z1 = gps.locate()
+								if x1 then
+									deltaX, deltaZ = z1 - z0, x1 - x0
+								end
 
-                local oldSlot = turtle.getSelectedSlot()
-                for slot = 1, 16 do
-                    local item = turtle.getItemDetail(slot)
-                    if item.name == "computercraft:wireless_modem" or item.name == "computercraft:advanced_wireless_modem" then
-                        turtle.select(slot)
-                        turtle.equipRight()
-                        local x0, y0, z0 = gps.locate()
-                        turtle.equipRight()
-                        turtle.select(oldSlot)
+								if not turtle.back() then
+									turtle.turnLeft()
+									if modemInInventory then
+										turtle.equipLeft()
+										turtle.select(currentSlot)
+									end
+									error("obstruction during bearing calibration")
+								end
+							elseif turtle.back() then
+								local x1, _, z1 = gps.locate()
+								if x1 then
+									deltaX, deltaZ = z0 - z1, x0 - x1
+								end
 
-                        if x0 then
-                            if turtle.forward() then
-                                local x1, y1, z1 = gps.locate()
-                                if not turtle.back() then error("obstruction during bearing calibration") end
+								if not turtle.forward() then
+									turtle.turnLeft()
+									if modemInInventory then
+										turtle.equipLeft()
+										turtle.select(currentSlot)
+										error("obstruction during bearing calibration")
+									end
+								end
+							end
+							turtle.turnLeft()
+						end
+					end
+				end
 
-                                if x1 then
-                                    local displacement = vector.new(x1, y1, z1) - vector.new(x0, y0, z0)
-                                    if displacement.z == 1 then
-                                        bearing = eturtle.SOUTH
-                                    elseif displacement.x == -1 then
-                                        bearing = eturtle.WEST
-                                    elseif displacement.z == -1 then
-                                        bearing = eturtle.NORTH
-                                    elseif displacement.x == 1 then
-                                        bearing = eturtle.EAST
-                                    else
-                                        error("no horizontal displacement when moving")
-                                    end
-                                    return true, "automatic calibration succeeded"
-                                elseif defaultBearing then
-                                    bearing = defaultBearing
-                                    return true, "automatic calibration failed: gps unavailable; manual calibration used"
-                                else
-                                    return false, "automatic calibration failed: gps unavailable"
-                                end
-                            end
+				if deltaX and deltaZ then
+					if deltaZ < 0 then
+						bearing = eturtle.NORTH
+						if modemInInventory then
+							turtle.equipLeft()
+							turtle.select(currentSlot)
+						end
+						return true
+					elseif deltaX > 0 then
+						bearing = eturtle.EAST
+						if modemInInventory then
+							turtle.equipLeft()
+							turtle.select(currentSlot)
+						end
+						return true
+					elseif deltaZ > 0 then
+						bearing = eturtle.SOUTH
+						if modemInInventory then
+							turtle.equipLeft()
+							turtle.select(currentSlot)
+						end
+						return true
+					elseif deltaX < 0 then
+						bearing = eturtle.WEST
+						if modemInInventory then
+							turtle.equipLeft()
+							turtle.select(currentSlot)
+						end
+						return true
+					else
+						if modemInInventory then
+							turtle.equipLeft()
+							turtle.select(currentSlot)
+						end
+						error("no displacement in bearing calibration")
+					end
+				end
+			end
+		end
 
-                            if turtle.back() then
-                                local x1, y1, z1 = gps.locate()
-                                if not turtle.forward() then error("obstruction during bearing calibration") end
-
-                                if x1 then
-                                    local displacement = vector.new(x1, y1, z1) - vector.new(x0, y0, z0)
-                                    if displacement.z == -1 then
-                                        bearing = eturtle.SOUTH
-                                    elseif displacement.x == 1 then
-                                        bearing = eturtle.WEST
-                                    elseif displacement.z == 1 then
-                                        bearing = eturtle.NORTH
-                                    elseif displacement.x == -1 then
-                                        bearing = eturtle.EAST
-                                    else
-                                        error("no horizontal displacement when moving")
-                                    end
-                                    return true, "automatic calibration succeeded"
-                                elseif defaultBearing then
-                                    bearing = defaultBearing
-                                    return true, "automatic calibration failed: gps unavailable; manual calibration used"
-                                else
-                                    return false, "automatic calibration failed: gps unavailable"
-                                end
-                            end
-
-                            if defaultBearing then
-                                bearing = defaultBearing
-                                return true, "automatic calibration failed: obstructed in both directions; manual calibration used"
-                            else
-                                return false, "automatic calibration failed: obstructed in both directions"
-                            end
-                        elseif defaultBearing then
-                            bearing = defaultBearing
-                            return true, "automatic calibration failed: gps unavailable; manual calibration used"
-                        else
-                            return false, "automatic calibration failed: gps unavailable"
-                        end
-                    end
-                end
-
-                if defaultBearing then
-                    bearing = defaultBearing
-                    return true, "automatic calibration failed: no wireless modem found; manual calibration used"
-                else
-                    return false, "automatic calibration failed: no wireless modem found"
-                end
-            else
-                if defaultBearing ~= nil then
-                    bearing = defaultBearing
-                    return true, "automatic calibration failed: insufficient fuel; manual calibration used"
-                else
-                    return false, "automatic calibration failed: insufficient fuel"
-                end
-            end
-        else
-            bearing = defaultBearing
-            return true, "manual calibration used"
-        end
+		bearing = manualBearing
+		return false
     end
 
-    function eturtle.calibrate(automatically, defaultPosition, defaultBearing, defaultEquipment)
-        expect(1, automatically, "nil", "boolean")
-        if type(automatically) == "boolean" then
-            if automatically then
-                expect(2, defaultPosition, "nil", "table")
-                if type(defaultPosition) == "table" then
-                    expect.field(defaultPosition, "x", "number")
-                    expect.field(defaultPosition, "y", "number")
-                    expect.field(defaultPosition, "z", "number")
-                end
+	function eturtle.calibrate(manualPosition, manualBearing, manualEquipment)
+		-- Coalesce default argument values.
+		if manualPosition == nil then manualPosition = vector.new(0, 0, 0) end
+		if manualBearing == nil then manualBearing = eturtle.SOUTH end
+		if manualEquipment == nil then manualEquipment = {} end
 
-                expect(3, defaultBearing, "nil", "number")
+		return eturtle.calibratePosition(manualPosition.x, manualPosition.y, manualPosition.z), eturtle.calibrateBearing(manualBearing), eturtle.calibrateEquipment(equipment.left, equipment.right)
+	end
 
-                expect(4, defaultEquipment, "nil", "table")
-                if type(defaultEquipment) == "table" then
-                    expect.field(defaultEquipment, "left", "boolean", "string")
-                    expect.field(defaultEquipment, "right", "boolean", "string")
-                end
-            else
-                expect(2, defaultPosition, "table")
-                expect.field(defaultPosition, "x", "number")
-                expect.field(defaultPosition, "y", "number")
-                expect.field(defaultPosition, "z", "number")
-
-                expect(3, defaultBearing, "number")
-
-                expect(4, defaultEquipment, "table")
-                expect.field(defaultEquipment, "left", "boolean", "string")
-                expect.field(defaultEquipment, "right", "boolean", "string")
-            end
-        else
-            automatically = true
-        end
-
-        local calibrateEquipmentSuccess, calibrateEquipmentMessage = eturtle.calibrateEquipment(automatically, defaultEquipment.left, defaultEquipment.right)
-        local calibratePositionSuccess, calibratePositionMessage = eturtle.calibratePosition(automatically, defaultPosition.x, defaultPosition.y, defaultPosition.z)
-        local calibrateBearingSuccess, calibrateBearingMessage = eturtle.calibrateBearing(automatically, defaultBearing)
-
-        return
-            calibratePositionSuccess and calibrateBearingSuccess and calibrateEquipmentSuccess,
-            {
-                position = {success = calibratePositionSuccess, message = calibratePositionMessage},
-                bearing = {success = calibrateBearingSuccess, message = calibrateBearingMessage},
-                equipment = {success = calibrateEquipmentSuccess, message = calibrateEquipmentMessage}
-            }
-    end
-
-    -- Introspection Methods
+    --[[ Introspection Methods ]]--
     function eturtle.getPosition()
         return vector.new(position.x, position.y, position.z)
     end
@@ -399,7 +317,9 @@ local eturtle = {} do
     end
 
     function eturtle.getFuelLevel()
-        local fuelLevel = turtle.getFuelLevel()
-        return fuelLevel == "unlimited" and math.huge or fuelLevel
+        if turtle.getFuelLimit() == "unlimited" then
+			return math.huge
+		end
+		return turtle.getFuelLevel()
     end
 end return eturtle

@@ -15,21 +15,23 @@ local eturtle = {} do
 	local position, bearing, equipment = nil, nil, nil
 	
 	--[[ Debugging Variables and Functions ]]--
-	local function defaultPrintHook(format, ...)
-		print(string.format(format, ...))
+	local function defaultPrintHook(message)
+		print(message)
 	end
-	local function defaultErrorHook(format, ...)
-		printError(string.format(format, ...))
+	local function defaultErrorHook(message)
+		printError(message)
 	end
 	local debug, debugPrintHook, debugErrorHook = false, defaultPrintHook, defaultErrorHook
 	local function debugPrint(format, ...)
 		if debug then
-			debugPrintHook(format, ...)
+			local message = string.format(format, ...)
+			debugPrintHook(message)
 		end
 	end
 	local function debugError(format, ...)
 		if debug then
-			debugErrorHook(format, ...)
+			local message = string.format(format, ...)
+			debugErrorHook(message)
 		end
 	end
 

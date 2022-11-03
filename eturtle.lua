@@ -1,6 +1,7 @@
 local expect = require("cc.expect")
+local pretty = require("cc.pretty")
 
-local function roundToNearestInterval(value, interval)
+local function roundNearestInterval(value, interval)
 	local valueDown, valueUp = math.floor(value / interval) * interval, math.ceil(value / interval) * interval
 	local differenceDown, differenceUp = value - valueDown, valueUp - value
 	if differenceDown < differenceUp then
@@ -40,9 +41,6 @@ local eturtle = {} do
     eturtle.WEST    = 0.5 * math.pi
     eturtle.NORTH   = 1.0 * math.pi
     eturtle.EAST    = 1.5 * math.pi
-
-    --[[ Settings ]]--
-    settings.define("eturtle.statefile", {description = "The path in which to store the turtle's state.", default = ".turtle", type = "string"})
 
     --[[ Calibration and Configuration Methods ]]--
 	local function equipWirelessModem()
@@ -190,7 +188,7 @@ local eturtle = {} do
 			if manualBearing == nil then manualBearing = eturtle.SOUTH end
 			expect(1, manualBearing, "number")
 			expect.range(manualBearing, 0.0 * math.pi, 2.0 * math.pi)
-			manualBearing = roundToNearestInterval(manualBearing, 0.5 * math.pi)
+			manualBearing = roundNearestInterval(manualBearing, 0.5 * math.pi)
 		end
 
 		local currentSlot = turtle.getSelectedSlot()
@@ -292,7 +290,12 @@ local eturtle = {} do
 		if manualEquipment == nil then manualEquipment = {} end
 
 		debugPrint("calibrating turtle...")
-		return eturtle.calibratePosition(manualPosition.x, manualPosition.y, manualPosition.z), eturtle.calibrateBearing(manualBearing), eturtle.calibrateEquipment(equipment.left, equipment.right)
+
+		local positionCalibrationSuccess = eturtle.calibratePosition(manualPosition.x, manualPosition.y, manualPosition.z)
+		local bearingCalibrationSuccess = eturtle.calibrateBearing(manualBearing)
+		local equipmentCalibrationSuccess = eturtle.calibrateEquipment()
+
+		return positionCalibrationSuccess and bearingCalibrationSuccess and equipmentCalibrationSuccess, positionCalibrationSuccess, bearingCalibrationSuccess, equipmentCalibrationSuccess
 	end
 
 	function eturtle.enableDebugging(printHook, errorHook)
@@ -343,5 +346,113 @@ local eturtle = {} do
 			return math.huge
 		end
 		return turtle.getFuelLimit()
+	end
+
+	--[[ Persistence Methods ]]--
+	function eturtle.saveState(path)
+		do
+			expect(1, path, "string")
+		end
+
+		debugPrint("saving turtle state...")
+
+		if position == nil then
+			debugError("position has not been calibrated")
+			return false
+		end
+
+		if bearing == nil then
+			debugError("bearing has not been calibrated")
+			return false
+		end
+
+		if equipment == nil then
+			debugError("equipment has not been calibrated")
+			return false
+		end
+
+		debugPrint("opening state file for writing...")
+		local file, fileError = fs.open(path, "wb")
+		if file then
+			local signatureBytes = "ETS"
+			file.write(signatureBytes)
+			debugPrint("wrote file signature (%s)", signatureBytes)
+			
+			local positionBytes = string.pack("lll", position.x, position.y, position.z)
+			file.write(positionBytes)
+			debugPrint("wrote position bytes (<%d,%d,%d> -> %s)", position.x, position.y, position.z, pretty.pretty(positionBytes))
+
+			local bearingBytes = string.pack("d", bearing)
+			file.write(bearingBytes)
+			debugPrint("wrote bearing bytes (%f -> %s)", bearing, pretty.pretty(bearingBytes))
+
+			local equipmentBytes = string.pack("s1s1", equipment.left or "", equipment.right or "")
+			file.write(equipmentBytes)
+			debugPrint("wrote equipment bytes (%s,%s -> %s)", equipment.left or "<nothing>", equipment.right or "<nothing>", pretty.pretty(equipmentBytes))
+
+			file.flush()
+			file.close()
+			debugPrint("wrote to disk")
+			return true
+		end
+
+		debugError("could not open state file for writing (%s)", fileError)
+		return false
+	end
+
+	function eturtle.loadState(path)
+		do
+			expect(1, path, "string")
+		end
+
+		debugPrint("loading turtle state...")
+
+		debugPrint("opening state file for reading...")
+		local file, fileError = fs.open(path, "rb")
+		if file then
+			local signatureBytes = file.read(3)
+			if signatureBytes == "ETS" then
+				debugPrint("file signature matched")
+
+				local positionBytes = file.read(string.packsize("lll"))
+				position = vector.new(string.unpack("lll", positionBytes))
+				debugPrint("read position bytes (%s -> <%d,%d,%d>)", pretty.pretty(positionBytes), position.x, position.y, position.z)
+				
+				local bearingBytes = file.read(string.packsize("d"))
+				bearing = string.unpack("d", bearingBytes)
+				debugPrint("read bearing bytes (%s -> %f)", pretty.pretty(bearingBytes), bearing)
+
+				local equipmentBytes = "" do
+					equipment = {}
+					
+					local leftEquipmentBytesCount = file.read()
+					if leftEquipmentBytesCount > 0 then
+						local leftEquipment = file.read(leftEquipmentBytesCount)
+						equipment.left = leftEquipment
+						equipmentBytes = equipmentBytes .. string.pack("s1", leftEquipment)
+					else
+						equipmentBytes = equipmentBytes .. "\000"
+					end
+
+					local rightEquipmentBytesCount = file.read()
+					if rightEquipmentBytesCount > 0 then
+						local rightEquipment = file.read(rightEquipmentBytesCount)
+						equipment.right = rightEquipment
+						equipmentBytes = equipmentBytes .. string.pack("s1", rightEquipment)
+					else
+						equipmentBytes = equipmentBytes .. "\000"
+					end
+				end
+				debugPrint("read equipment bytes (%s -> %s,%s)", pretty.pretty(equipmentBytes), equipment.left or "<nothing>", equipment.right or "nothing")
+
+				return true
+			end
+
+			debugError("state file did not match signature (%s ~= ETS)", pretty.pretty(signatureBytes), )
+			return false
+		end
+
+		debugError("could not open state file for reading (%s)", fileError)
+		return false
 	end
 end return eturtle

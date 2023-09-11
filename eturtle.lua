@@ -13,28 +13,9 @@ end
 
 local eturtle = {} do
     --[[ Turtle State Variables ]]--
-	local position, bearing, equipment = nil, nil, nil
-	
-	--[[ Debugging Variables and Functions ]]--
-	local function defaultPrintHook(message)
-		print(message)
-	end
-	local function defaultErrorHook(message)
-		printError(message)
-	end
-	local debug, debugPrintHook, debugErrorHook = false, defaultPrintHook, defaultErrorHook
-	local function debugPrint(format, ...)
-		if debug then
-			local message = string.format(format, ...)
-			debugPrintHook(message)
-		end
-	end
-	local function debugError(format, ...)
-		if debug then
-			local message = string.format(format, ...)
-			debugErrorHook(message)
-		end
-	end
+	local state
+    local logging
+    local fueling
 
     --[[ Bearing Constants ]]--
     eturtle.SOUTH   = 0.0 * math.pi
@@ -42,22 +23,127 @@ local eturtle = {} do
     eturtle.NORTH   = 1.0 * math.pi
     eturtle.EAST    = 1.5 * math.pi
 
+    --[[ Default Variables and Functions ]]--
+    local defaultStateAutomatic = false
+    local defaultStatePosition = nil
+    local defaultStateBearing = nil
+    local defaultStateEquipment = nil
+    state = {
+        automatic = defaultStateAutomatic,
+        position = defaultStatePosition,
+        bearing = defaultStateBearing,
+        equipment = defaultStateEquipment,
+    }
+
+    fueling = {
+        registry = {
+            items = {
+                ["minecraft:lava_bucket"] = 1000,
+                ["minecraft:coal_block"] = 800,
+                ["minecraft:dried_kelp_block"] = 200,
+                ["minecraft:blaze_rod"] = 120,
+                ["minecraft:bamboo_mosaic"] = 15,
+                ["minecraft:bamboo_mosaic_stairs"] = 15,
+                ["minecraft:chiseled_bookshelf"] = 15,
+                ["minecraft:bee_nest"] = 15,
+                ["minecraft:beehive"] = 15,
+                ["minecraft:ladder"] = 15,
+                ["minecraft:crafting_table"] = 15,
+                ["minecraft:cartography_table"] = 15,
+                ["minecraft:fletching_table"] = 15,
+                ["minecraft:smithing_table"] = 15,
+                ["minecraft:loom"] = 15,
+                ["minecraft:bookshelf"] = 15,
+                ["minecraft:lectern"] = 15,
+                ["minecraft:composter"] = 15,
+                ["minecraft:chest"] = 15,
+                ["minecraft:trapped_chest"] = 15,
+                ["minecraft:barrel"] = 15,
+                ["minecraft:daylight_detector"] = 15,
+                ["minecraft:jukebox"] = 15,
+                ["minecraft:note_block"] = 15,
+                ["minecraft:crossbow"] = 15,
+                ["minecraft:bow"] = 15,
+                ["minecraft:fishing_rod"] = 15,
+                ["minecraft:hanging_sign"] = 10,
+                ["minecraft:wooden_pickaxe"] = 10,
+                ["minecraft:wooden_hoe"] = 10,
+                ["minecraft:wooden_axe"] = 10,
+                ["minecraft:wooden_sword"] = 10,
+                ["minecraft:bowl"] = 5,
+                ["minecraft:bamboo_mosaic_slab"] = 7,
+                ["minecraft:stick"] = 5,
+                ["minecraft:dead_bush"] = 5,
+                ["minecraft:azalea"] = 5,
+                ["minecraft:bamboo"] = 2,
+                ["minecraft:scaffolding"] = 2,
+            },
+            tags = {
+                ["minecraft:coals"] = 80,
+                ["minecraft:boats"] = 60,
+                ["minecraft:chest_boats"] = 60,
+                ["minecraft:bamboo_blocks"] = 15,
+                ["minecraft:logs"] = 15,
+                ["minecraft:planks"] = 15,
+                ["minecraft:wooden_pressure_plates"] = 15,
+                ["minecraft:wooden_trapdoors"] = 15,
+                ["forge:fence_gates/wooden"] = 15,
+                ["minecraft:wooden_fences"] = 15,
+                ["minecraft:banners"] = 15,
+                ["minecraft:wooden_doors"] = 10,
+                ["minecraft:wooden_slabs"] = 7,
+                ["minecraft:wooden_buttons"] = 5,
+                ["minecraft:signs"] = 10,
+                ["minecraft:saplings"] = 10,
+                ["minecraft:wool"] = 5,
+            }
+        }
+    }
+    
+    local defaultLoggingEnabled = false
+	local function defaultPrintHook(message)
+		print(message)
+	end
+	local function defaultErrorHook(message)
+		printError(message)
+	end
+    logging = {
+        enabled = defaultLoggingEnabled,
+        hooks = {
+            print = defaultPrintHook,
+            error = defaultErrorHook
+        }
+    }
+	function logging.print(format, ...)
+		if logging.enabled then
+			local message = string.format(format, ...)
+			logging.hooks.print(message)
+		end
+	end
+	function logging.error(format, ...)
+		if logging.enabled then
+			local message = string.format(format, ...)
+			logging.hooks.error(message)
+		end
+	end
+
     --[[ Calibration and Configuration Methods ]]--
 	local function equipWirelessModem()
-		debugPrint("searching for wireless modem...")
+		logging.print("searching for wireless modem...")
+
 		local modemInEquipment, modemInInventory = nil, nil
 		for slot = 1, 16 do
 			local itemCount = turtle.getItemCount(slot)
 			if modemInEquipment == nil and itemCount == 0 then
 				turtle.select(slot)
-				debugPrint("found empty slot (#%d) to search equipment", slot)
+				logging.print("found empty slot (#%d) to search equipment", slot)
 
 				if turtle.equipLeft() then
 					local item = turtle.getItemDetail()
 					if item and item.name:match("^computercraft:[%a_]*wireless_modem$") then
 						modemInEquipment = true
 						turtle.equipLeft()
-						debugPrint("found wireless modem (%s) in left equipment", item.name)
+						logging.print("found wireless modem (%s) in left equipment", item.name)
 						return true, "equipment.left"
 					end
 					turtle.equipLeft()
@@ -68,7 +154,7 @@ local eturtle = {} do
 					if item and item.name:match("^computercraft:[%a_]*wireless_modem$") then
 						modemInEquipment = true
 						turtle.equipRight()
-						debugPrint("found wireless modem (%s) in right equipment", item.name)
+						logging.print("found wireless modem (%s) in right equipment", item.name)
 						return true, "equipment.right"
 					end
 					turtle.equipRight()
@@ -79,18 +165,17 @@ local eturtle = {} do
 					modemInInventory = true
 					turtle.select(slot)
 					turtle.equipLeft()
-					debugPrint("found wireless modem (%s) in slot #%d", item.name, slot)
+					logging.print("found wireless modem (%s) in slot #%d", item.name, slot)
 					return true, string.format("inventory[%d]", slot)
 				end
 			end
 		end
 
-		debugError("no wireless modem found")
+		logging.error("no wireless modem found")
 		return false
 	end
 
     function eturtle.calibrateEquipment(manualLeft, manualRight)
-		-- Check arguments.
 		do
 			expect(1, manualLeft, "nil", "string")
 		end
@@ -98,46 +183,46 @@ local eturtle = {} do
 			expect(2, manualRight, "nil", "string")
 		end
 		
-		local currentSlot = turtle.getSelectedSlot()
-		debugPrint("calibrating equipment...")
+		logging.print("calibrating equipment...")
 
+        
 		-- Check for empty slot.
 		-- Unequip, analyze, then equip each side.
-		debugPrint("finding empty slot to analyze equipment...")
+		local currentSlot = eturtle.getSelectedSlot()
+		logging.print("finding empty slot to analyze equipment...")
 		for slot = 1, 16 do
 			if turtle.getItemCount(slot) == 0 then
 				turtle.select(slot)
-				debugPrint("found empty slot (#%d)", slot)
+				logging.print("found empty slot (#%d)", slot)
 
-				equipment = {}
+				state.equipment = {}
 				
 				if turtle.equipLeft() then
 					local item = turtle.getItemDetail()
-					equipment.left = item and item.name
+					state.equipment.left = item and item.name
 					turtle.equipLeft()
 				end
-				debugPrint("got left equipment (%s)", equipment.left or "<nothing>")
+				logging.print("got left equipment (%s)", state.equipment.left or "<nothing>")
 
 				if turtle.equipRight() then
 					local item = turtle.getItemDetail()
-					equipment.right = item and item.name
+					state.equipment.right = item and item.name
 					turtle.equipRight()
 				end
-				debugPrint("got right equipment (%s)", equipment.right or "<nothing>")
+				logging.print("got right equipment (%s)", state.equipment.right or "<nothing>")
 
 				turtle.select(currentSlot)
 				return true
 			end
 		end
-		debugError("no empty slot")
+		logging.error("no empty slot")
 
-		equipment = {left = manualLeft, right = manualRight}
-		debugError("set equipment defaults (%s and %s)", manualLeft or "<nothing>", manualRight or "<nothing>")
+		state.equipment = {left = manualLeft, right = manualRight}
+		logging.error("set equipment defaults (left %s and right %s)", manualLeft or "<nothing>", manualRight or "<nothing>")
 		return false
     end
 
     function eturtle.calibratePosition(manualX, manualY, manualZ)
-		-- Check arguments.
         do
 			if manualX == nil then manualX = 0 end
 			expect(1, manualX, "number")
@@ -154,32 +239,32 @@ local eturtle = {} do
 			expect.range(manualZ, -3e7, 3e7)
 		end
 		
-		local currentSlot = turtle.getSelectedSlot()
-		debugPrint("calibrating position...")
-
+		logging.print("calibrating position...")
+        
 		-- Get the position using GPS if available.
+		local currentSlot = eturtle.getSelectedSlot()
 		local modemAvailable, modemSource = equipWirelessModem()
 		if modemAvailable then
-			debugPrint("using GPS to get position...")
-			local x, y, z = gps.locate(nil, debug)
+			logging.print("using GPS to get position...")
+			local x, y, z = gps.locate(nil, logging.enabled)
 
 			if x then
-				debugPrint("got position (<%d,%d,%d>)", x, y, z)
-				position = vector.new(x, y, z)
+				logging.print("got position (<%d,%d,%d>)", x, y, z)
+				state.position = vector.new(x, y, z)
 
 				---@diagnostic disable-next-line: need-check-nil
 				if modemSource:match("^inventory%[%d+%]$") then
 					turtle.equipLeft()
 					turtle.select(currentSlot)
-					debugPrint("unequipped wireless modem")
+					logging.print("unequipped wireless modem")
 				end
 
 				return true
-			else debugError("GPS is unavailable") end
+			else logging.error("GPS is unavailable") end
 		end
 
-		position = vector.new(manualX, manualY, manualZ)
-		debugError("set position default (<%d,%d,%d>)", manualX, manualY, manualZ)
+		state.position = vector.new(manualX, manualY, manualZ)
+		logging.error("set position default (<%d,%d,%d>)", manualX, manualY, manualZ)
 		return false
     end
 
@@ -191,37 +276,35 @@ local eturtle = {} do
 			manualBearing = roundNearestInterval(manualBearing, 0.5 * math.pi)
 		end
 
-		local currentSlot = turtle.getSelectedSlot()
-		debugPrint("calibrating bearing...")
+		logging.print("calibrating bearing...")
 		
-		debugPrint("checking fuel level...")
+        -- Calibrate bearing by using GPS, then moving to induce a displacment.
+        local currentSlot = eturtle.getSelectedSlot()
+		logging.print("checking fuel level...")
 		local currentFuelLevel = turtle.getFuelLimit() == "unlimited" and math.huge or turtle.getFuelLevel()
-
 		if currentFuelLevel >= 2 then
-			debugPrint("fuel level is sufficient (%s)", currentFuelLevel < math.huge and tostring(currentFuelLevel) or "+infinity")
-
 			local modemAvailable, modemSource = equipWirelessModem()
 			if modemAvailable then
-				debugPrint("using GPS to get starting position...")
-				local x0, y0, z0 = gps.locate(nil, debug)
+				logging.print("using GPS to get starting position...")
+				local x0, y0, z0 = gps.locate(nil, logging.enabled)
 				if x0 then
-					debugPrint("got starting position (<%d,%d,%d>)", x0, y0, z0)
+					logging.print("got starting position (<%d,%d,%d>)", x0, y0, z0)
 
-					debugPrint("moving to induce a displacement...")
+					logging.print("moving to induce a displacement...")
 					local movement = nil
 					if turtle.forward() then
-						debugPrint("moved forward parallel to current bearing")
+						logging.print("moved forward parallel to current bearing")
 						movement = "parallel-forward"
 					elseif turtle.back() then
-						debugPrint("moved backward parallel to current bearing")
+						logging.print("moved backward parallel to current bearing")
 						movement = "parallel-backward"
 					else
 						turtle.turnLeft()
 						if turtle.forward() then
-							debugPrint("moved forward perpendicular to current bearing")
+							logging.print("moved forward perpendicular to current bearing")
 							movement = "perpendicular-forward"
 						elseif turtle.back() then
-							debugPrint("moved forward perpendicular to current bearing")
+							logging.print("moved forward perpendicular to current bearing")
 							movement = "perpendicular-backward"
 						else
 							turtle.turnRight()
@@ -229,57 +312,61 @@ local eturtle = {} do
 					end
 
 					if movement then
-						debugPrint("using GPS to get ending position...")
-						local x1, y1, z1 = gps.locate(nil, debug)
+						logging.print("using GPS to get ending position...")
+						local x1, y1, z1 = gps.locate(nil, logging.enabled)
 						if x1 then
-							debugPrint("got ending position (<%d,%d,%d>)", x1, y1, z1)
+							logging.print("got ending position (<%d,%d,%d>)", x1, y1, z1)
 							if movement == "parallel-forward" then
-								bearing = math.atan2(x0 - x1, z1 - z0) % (2.0 * math.pi)
-								debugPrint("got bearing (%01.1fpi)", bearing / math.pi)
+								state.bearing = math.atan2(x0 - x1, z1 - z0) % (2.0 * math.pi)
+								logging.print("got bearing (%01.2frad)", state.bearing)
 							elseif movement == "parallel-backward" then
-								bearing = math.atan2(x1 - x0, z0 - z1) % (2.0 * math.pi)
-								debugPrint("got bearing (%01.1fpi)", bearing / math.pi)
+								state.bearing = math.atan2(x1 - x0, z0 - z1) % (2.0 * math.pi)
+								logging.print("got bearing (%01.2frad)", state.bearing)
 							elseif movement == "perpendicular-forward" then
-								bearing = math.atan2(z0 - z1, x1 - x0) % (2.0 * math.pi)
-								debugPrint("got bearing (%01.1fpi)", bearing / math.pi)
+								state.bearing = math.atan2(z0 - z1, x1 - x0) % (2.0 * math.pi)
+								logging.print("got bearing (%01.2frad)", state.bearing)
 							elseif movement == "perpendicular-backward" then
-								bearing = math.atan2(z1 - z0, x0 - x1) % (2.0 * math.pi)
-								debugPrint("got bearing (%01.1fpi)", bearing / math.pi)
+								state.bearing = math.atan2(z1 - z0, x0 - x1) % (2.0 * math.pi)
+								logging.print("got bearing (%01.2frad)", state.bearing)
 							end
-						else debugError("GPS not available") end
-					else debugError("completely surrounded") end
+						else logging.error("gps not available") end
+					else logging.error("completely surrounded") end
 
 					---@diagnostic disable-next-line: need-check-nil
 					if modemSource:match("^inventory%[%d+%]$") then
 						turtle.equipLeft()
 						turtle.select(currentSlot)
-						debugPrint("unequipping wireless modem")
+						logging.print("unequipping wireless modem")
 					end
 
 					if movement then
-						debugPrint("moving to original position...")
+						logging.print("moving to original position...")
 						if movement == "parallel-forward" then
 							if not turtle.back() then error("obstruction during displacement", 0) end
-							debugPrint("moved backward parallel to current bearing")
+							logging.print("moved backward parallel to current bearing")
 						elseif movement == "parallel-backward" then
 							if not turtle.forward() then error("obstruction during displacement", 0) end
-							debugPrint("moved forward parallel to current bearing")
+							logging.print("moved forward parallel to current bearing")
 						elseif movement == "perpendicular-forward" then
 							if not turtle.back() then error("obstruction during displacement", 0) end
 							turtle.turnRight()
-							debugPrint("moved backward perpendicular to current bearing")
+							logging.print("moved backward perpendicular to current bearing")
 						elseif movement == "perpendicular-backward" then
 							if not turtle.forward() then error("obstruction during displacement", 0) end
 							turtle.turnRight()
-							debugPrint("moved forward perpendicular to current bearing")
+							logging.print("moved forward perpendicular to current bearing")
 						end
 					end
-				else debugError("GPS not available") end
+				else
+                    logging.error("gps not available")
+                end
 			end
-		else debugError("not enough fuel") end
+		else
+            logging.error("insufficient fuel")
+        end
 		
-		bearing = manualBearing
-		debugError("set bearing default (%1.1f)", manualBearing)
+		state.bearing = manualBearing
+		logging.error("set bearing default (%01.2frad)", manualBearing)
 		return false
     end
 
@@ -289,16 +376,16 @@ local eturtle = {} do
 		if manualBearing == nil then manualBearing = eturtle.SOUTH end
 		if manualEquipment == nil then manualEquipment = {} end
 
-		debugPrint("calibrating turtle...")
+		logging.print("calibrating turtle...")
 
 		local positionCalibrationSuccess = eturtle.calibratePosition(manualPosition.x, manualPosition.y, manualPosition.z)
 		local bearingCalibrationSuccess = eturtle.calibrateBearing(manualBearing)
-		local equipmentCalibrationSuccess = eturtle.calibrateEquipment()
+		local equipmentCalibrationSuccess = eturtle.calibrateEquipment(manualEquipment.left, manualEquipment.right)
 
 		return positionCalibrationSuccess and bearingCalibrationSuccess and equipmentCalibrationSuccess, positionCalibrationSuccess, bearingCalibrationSuccess, equipmentCalibrationSuccess
 	end
 
-	function eturtle.enableDebugging(printHook, errorHook)
+	function eturtle.enableLogging(printHook, errorHook)
 		do
 			if printHook == nil then printHook = defaultPrintHook end
 			expect(1, printHook, "function")
@@ -308,30 +395,42 @@ local eturtle = {} do
 			expect(2, errorHook, "function")
 		end
 
-		debug = true
-		debugPrintHook = printHook
-		debugErrorHook = errorHook
+		logging.enabled = true
+		logging.hooks.print = printHook
+		logging.hooks.error = errorHook
 	end
 
-	function eturtle.disableDebugging()
-		debug = false
+	function eturtle.disableLogging()
+		logging.enabled = false
 	end
 
     --[[ Introspection Methods ]]--
     function eturtle.getPosition()
-        return vector.new(position.x, position.y, position.z)
+        if state.position == nil then
+            logging.error("position is not calibrated")
+            return nil
+        end
+        return vector.new(state.position.x, state.position.y, state.position.z)
     end
 
     function eturtle.getBearing()
-        return bearing
+        if state.bearing == nil then
+            logging.error("bearing is not calibrated")
+            return nil
+        end
+        return state.bearing
     end
 
     function eturtle.getEquipment()
-        return {left = equipment.left, right = equipment.right}
+        if state.equipment == nil then
+            logging.error("equipment is not calibrated")
+            return nil
+        end
+        return {left = state.equipment.left, right = state.equipment.right}
     end
 
     function eturtle.getSelectedSlot()
-        return turtle.getSelectedSlot()
+        return eturtle.getSelectedSlot()
     end
 
     function eturtle.getFuelLevel()
@@ -354,49 +453,49 @@ local eturtle = {} do
 			expect(1, path, "string")
 		end
 
-		debugPrint("saving turtle state...")
+		logging.print("saving turtle state to \"%s\"...", path)
 
-		if position == nil then
-			debugError("position has not been calibrated")
+		if state.position == nil then
+			logging.error("position has not been calibrated")
 			return false
 		end
 
-		if bearing == nil then
-			debugError("bearing has not been calibrated")
+		if state.bearing == nil then
+			logging.error("bearing has not been calibrated")
 			return false
 		end
 
-		if equipment == nil then
-			debugError("equipment has not been calibrated")
+		if state.equipment == nil then
+			logging.error("equipment has not been calibrated")
 			return false
 		end
 
-		debugPrint("opening state file for writing...")
+		logging.print("opening state file \"%s\" for writing...", path)
 		local file, fileError = fs.open(path, "wb")
 		if file then
 			local signatureBytes = "ETS"
 			file.write(signatureBytes)
-			debugPrint("wrote file signature (%s)", signatureBytes)
+			logging.print("wrote file signature (%s)", signatureBytes)
 			
-			local positionBytes = string.pack("lll", position.x, position.y, position.z)
+			local positionBytes = string.pack("lll", state.position.x, state.position.y, state.position.z)
 			file.write(positionBytes)
-			debugPrint("wrote position bytes (<%d,%d,%d> -> %s)", position.x, position.y, position.z, pretty.pretty(positionBytes))
+			logging.print("wrote position bytes (<%d,%d,%d> -> %s)", state.position.x, state.position.y, state.position.z, pretty.pretty(positionBytes))
 
-			local bearingBytes = string.pack("d", bearing)
+			local bearingBytes = string.pack("d", state.bearing)
 			file.write(bearingBytes)
-			debugPrint("wrote bearing bytes (%f -> %s)", bearing, pretty.pretty(bearingBytes))
+			logging.print("wrote bearing bytes (%f -> %s)", state.bearing, pretty.pretty(bearingBytes))
 
-			local equipmentBytes = string.pack("s1s1", equipment.left or "", equipment.right or "")
+			local equipmentBytes = string.pack("s1s1", state.equipment.left or "", state.equipment.right or "")
 			file.write(equipmentBytes)
-			debugPrint("wrote equipment bytes (%s,%s -> %s)", equipment.left or "<nothing>", equipment.right or "<nothing>", pretty.pretty(equipmentBytes))
+			logging.print("wrote equipment bytes (%s,%s -> %s)", state.equipment.left or "<nothing>", state.equipment.right or "<nothing>", pretty.pretty(equipmentBytes))
 
 			file.flush()
 			file.close()
-			debugPrint("wrote to disk")
+			logging.print("wrote to disk")
 			return true
 		end
 
-		debugError("could not open state file for writing (%s)", fileError)
+		logging.error("could not open state file \"%s\" for writing (%s)", path, fileError)
 		return false
 	end
 
@@ -405,30 +504,30 @@ local eturtle = {} do
 			expect(1, path, "string")
 		end
 
-		debugPrint("loading turtle state...")
+		logging.print("loading turtle state...")
 
-		debugPrint("opening state file for reading...")
+		logging.print("opening state file for reading...")
 		local file, fileError = fs.open(path, "rb")
 		if file then
 			local signatureBytes = file.read(3)
 			if signatureBytes == "ETS" then
-				debugPrint("file signature matched")
+				logging.print("file signature matched")
 
 				local positionBytes = file.read(string.packsize("lll"))
-				position = vector.new(string.unpack("lll", positionBytes))
-				debugPrint("read position bytes (%s -> <%d,%d,%d>)", pretty.pretty(positionBytes), position.x, position.y, position.z)
+				state.position = vector.new(string.unpack("lll", positionBytes))
+				logging.print("read position bytes (%s -> <%d,%d,%d>)", pretty.pretty(positionBytes), state.position.x, state.position.y, state.position.z)
 				
 				local bearingBytes = file.read(string.packsize("d"))
-				bearing = string.unpack("d", bearingBytes)
-				debugPrint("read bearing bytes (%s -> %f)", pretty.pretty(bearingBytes), bearing)
+				state.bearing = string.unpack("d", bearingBytes)
+				logging.print("read bearing bytes (%s -> %f)", pretty.pretty(bearingBytes), state.bearing)
 
 				local equipmentBytes = "" do
-					equipment = {}
+					state.equipment = {}
 					
 					local leftEquipmentBytesCount = file.read()
 					if leftEquipmentBytesCount > 0 then
 						local leftEquipment = file.read(leftEquipmentBytesCount)
-						equipment.left = leftEquipment
+						state.equipment.left = leftEquipment
 						equipmentBytes = equipmentBytes .. string.pack("s1", leftEquipment)
 					else
 						equipmentBytes = equipmentBytes .. "\000"
@@ -437,22 +536,323 @@ local eturtle = {} do
 					local rightEquipmentBytesCount = file.read()
 					if rightEquipmentBytesCount > 0 then
 						local rightEquipment = file.read(rightEquipmentBytesCount)
-						equipment.right = rightEquipment
+						state.equipment.right = rightEquipment
 						equipmentBytes = equipmentBytes .. string.pack("s1", rightEquipment)
 					else
 						equipmentBytes = equipmentBytes .. "\000"
 					end
 				end
-				debugPrint("read equipment bytes (%s -> %s,%s)", pretty.pretty(equipmentBytes), equipment.left or "<nothing>", equipment.right or "nothing")
+				logging.print("read equipment bytes (%s -> %s,%s)", pretty.pretty(equipmentBytes), state.equipment.left or "<nothing>", state.equipment.right or "nothing")
 
 				return true
 			end
 
-			debugError("state file did not match signature (%s ~= ETS)", pretty.pretty(signatureBytes), )
+			logging.error("state file did not match signature (%s ~= ETS)", pretty.pretty(signatureBytes))
 			return false
 		end
 
-		debugError("could not open state file for reading (%s)", fileError)
+		logging.error("could not open state file for reading (%s)", fileError)
 		return false
 	end
+
+    --[[ Traversal Methods ]]--
+    local function calculateBearingVector(bearing)
+        return vector.new(-math.sin(bearing), 0, math.cos(bearing))
+    end
+
+    function eturtle.forward(blocks)
+        do
+            if blocks == nil then blocks = 1 end
+            blocks = expect.expect(1, blocks, "number")
+            blocks = expect.range(blocks, 1, math.huge)
+        end
+
+        logging.print("attempting to move forward %d block(s)", blocks)
+
+        logging.print("checking position...")
+        if state.position == nil then
+            logging.error("position not calibrated")
+            return false, 0
+        end
+        
+        logging.print("checking bearing...")
+        if state.bearing == nil then
+            logging.error("bearing not calibrated")
+            return false, 0
+        end
+
+        logging.print("checking fuel...")
+        local currentFuelLevel = eturtle.getFuelLevel()
+        if currentFuelLevel < blocks then
+            logging.error("insufficient fuel")
+            return false, 0
+        end
+
+        local bearingVector = calculateBearingVector(state.bearing)
+        for block = 1, blocks do
+            local success, reason = turtle.forward()
+            if not success then
+                logging.error("cannot move forward (%s)", reason)
+                return false, block
+            end
+            state.position = state.position + bearingVector
+        end
+
+        return true, blocks
+    end
+
+    function eturtle.back(blocks)
+        do
+            if blocks == nil then blocks = 1 end
+            blocks = expect.expect(1, blocks, "number")
+            blocks = expect.range(blocks, 1, math.huge)
+        end
+
+        logging.print("attempting to move backward %d block(s)", blocks)
+
+        logging.print("checking position...")
+        if state.position == nil then
+            logging.error("position not calibrated")
+            return false, 0
+        end
+
+        logging.print("checking bearing...")
+        if state.bearing == nil then
+            logging.error("bearing not calibrated")
+            return false, 0
+        end
+
+        logging.print("checking fuel...")
+        local currentFuelLevel = eturtle.getFuelLevel()
+        if currentFuelLevel < blocks then
+            logging.error("insufficient fuel")
+            return false, 0
+        end
+
+        local bearingVector = calculateBearingVector(state.bearing)
+        for block = 1, blocks do
+            local success, reason = turtle.back()
+            if not success then
+                logging.error("cannot move backward (%s)", reason)
+                return false, block
+            end
+            state.position = state.position - bearingVector
+        end
+
+        return true, blocks
+    end
+
+    function eturtle.left(blocks)
+        eturtle.turnLeft()
+        eturtle.forward(blocks)
+    end
+
+    function eturtle.right(blocks)
+        eturtle.turnRight()
+        eturtle.forward(blocks)
+    end
+
+    function eturtle.strafeLeft(blocks)
+        do
+            if blocks == nil then blocks = 1 end
+            blocks = expect.expect(1, blocks, "number")
+            blocks = expect.range(blocks, 1, math.huge)
+        end
+
+        logging.print("attempting to move backward %d block(s)", blocks)
+
+        logging.print("checking position...")
+        if state.position == nil then
+            logging.error("position not calibrated")
+            return false, 0
+        end
+
+        logging.print("checking bearing...")
+        if state.bearing == nil then
+            logging.error("bearing not calibrated")
+            return false, 0
+        end
+
+        logging.print("checking fuel...")
+        local currentFuelLevel = eturtle.getFuelLevel()
+        if currentFuelLevel < blocks then
+            logging.error("insufficient fuel")
+            return false, 0
+        end
+
+        local bearingVector = calculateBearingVector((state.bearing - 0.5 * math.pi) % (2.0 * math.pi))
+        turtle.turnLeft()
+        for block = 1, blocks do
+            local success, reason = turtle.back()
+            if not success then
+                logging.error("cannot move backward (%s)", reason)
+                turtle.turnRight()
+                return false, block
+            end
+            state.position = state.position + bearingVector
+        end
+        turtle.turnRight()
+        
+        return true, blocks
+    end
+
+    function eturtle.strafeRight(blocks)
+        do
+            if blocks == nil then blocks = 1 end
+            blocks = expect.expect(1, blocks, "number")
+            blocks = expect.range(blocks, 1, math.huge)
+        end
+
+        logging.print("attempting to move backward %d block(s)", blocks)
+
+        logging.print("checking position...")
+        if state.position == nil then
+            logging.error("position not calibrated")
+            return false, 0
+        end
+
+        logging.print("checking bearing...")
+        if state.bearing == nil then
+            logging.error("bearing not calibrated")
+            return false, 0
+        end
+
+        logging.print("checking fuel...")
+        local currentFuelLevel = eturtle.getFuelLevel()
+        if currentFuelLevel < blocks then
+            logging.error("insufficient fuel")
+            return false, 0
+        end
+
+        local bearingVector = calculateBearingVector((state.bearing + 0.5 * math.pi) % (2.0 * math.pi))
+        turtle.turnRight()
+        for block = 1, blocks do
+            local success, reason = turtle.back()
+            if not success then
+                logging.error("cannot move backward (%s)", reason)
+                turtle.turnLeft()
+                return false, block
+            end
+            state.position = state.position + bearingVector
+        end
+        turtle.turnLeft()
+
+        return true, blocks
+    end
+
+    function eturtle.up(blocks)
+        do
+            if blocks == nil then blocks = 1 end
+            blocks = expect.expect(1, blocks, "number")
+            blocks = expect.range(blocks, 1, math.huge)
+        end
+
+        logging.print("attempting to move upward %d block(s)", blocks)
+
+        logging.print("checking position...")
+        if state.position == nil then
+            logging.error("position not calibrated")
+            return false, 0
+        end
+
+        logging.print("checking bearing...")
+        if state.bearing == nil then
+            logging.error("bearing not calibrated")
+            return false, 0
+        end
+
+        logging.print("checking fuel...")
+        local currentFuelLevel = eturtle.getFuelLevel()
+        if currentFuelLevel < blocks then
+            logging.error("insufficient fuel")
+            return false, 0
+        end
+
+        local upVector = vector(0, 1, 0)
+        for block = 1, blocks do
+            local success, reason = turtle.up()
+            if not success then
+                logging.error("cannot move upward (%s)", reason)
+                return false, block
+            end
+            state.position = state.position + upVector
+        end
+
+        return true, blocks
+    end
+
+    function eturtle.down(blocks)
+        do
+            if blocks == nil then blocks = 1 end
+            blocks = expect.expect(1, blocks, "number")
+            blocks = expect.range(blocks, 1, math.huge)
+        end
+
+        logging.print("attempting to move downward %d block(s)", blocks)
+
+        logging.print("checking position...")
+        if state.position == nil then
+            logging.error("position not calibrated")
+            return false, 0
+        end
+
+        logging.print("checking bearing...")
+        if state.bearing == nil then
+            logging.error("bearing not calibrated")
+            return false, 0
+        end
+
+        logging.print("checking fuel...")
+        local currentFuelLevel = eturtle.getFuelLevel()
+        if currentFuelLevel < blocks then
+            logging.error("insufficient fuel")
+            return false, 0
+        end
+
+        local downVector = vector(0, -1, 0)
+        for block = 1, blocks do
+            local success, reason = turtle.down()
+            if not success then
+                logging.error("cannot move downward (%s)", reason)
+                return false, block
+            end
+            state.position = state.position + downVector
+        end
+
+        return true, blocks
+    end
+
+    function eturtle.turnLeft()
+        if state.bearing == nil then
+            logging.error("bearing not calibrated")
+            return false
+        end
+
+        turtle.turnLeft()
+        state.bearing = (state.bearing - 0.5 * math.pi) % (2.0 * math.pi)
+        return true
+    end
+
+    function eturtle.turnRight()
+        if state.bearing == nil then
+            logging.error("bearing not calibrated")
+            return false
+        end
+
+        turtle.turnRight()
+        state.bearing = (state.bearing + 0.5 * math.pi) % (2.0 * math.pi)
+        return true
+    end
+
+    function eturtle.turnAround()
+        if state.bearing == nil then
+            logging.error("bearing not calibrated")
+            return false
+        end
+
+        turtle.turnRight()
+        turtle.turnRight()
+        state.bearing = (state.bearing + 1.0 * math.pi) % (2.0 * math.pi)
+        return true
+    end
 end return eturtle
